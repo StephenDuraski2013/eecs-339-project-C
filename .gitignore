@@ -11,3 +11,23 @@
 *.lai
 *.la
 *.a
+
+# Executable files
+btree_delete
+btree_display
+btree_init
+btree_insert
+btree_lookup
+btree_sane
+btree_show
+btree_update
+deletedisk
+freebuffer
+infodisk
+makedisk
+readbuffer
+readdisk
+sim
+writebuffer
+writedisk
+

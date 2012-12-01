@@ -302,9 +302,8 @@ ERROR_T BTreeIndex::LookupOrUpdateInternal(const SIZE_T &node,
                     if (op==BTREE_OP_LOOKUP) {
                         return b.GetVal(offset,value);
                     } else {
-                        // BTREE_OP_UPDATE
-                        // WRITE ME
-                        return ERROR_UNIMPL;
+                        return b.SetVal(offset,value);
+                        // WROTE ME
                     }
                 }
             }
@@ -444,6 +443,83 @@ ERROR_T BTreeIndex::Lookup(const KEY_T &key, VALUE_T &value)
  */
 ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
 {
+    // If root node has not yet been initialized, initialize it
+    if (superblock.info.rootnode == 0) {
+        SIZE_T node_num;
+        ERROR_T error;
+        if ((error = AllocateNode(node_num)) != ERROR_NOERROR)
+            return error;
+        superblock.info.rootnode = node_num;
+    }
+
+    BTreeNode node;
+    node.Unserialize(buffercache,n);
+
+
+
+    // Search for the proper place (copied from LookupOrUpdate - needs to be changed)
+    switch (b.info.nodetype) {
+        //
+        // Internal nodes:
+        // store keys and pointers (disk block #) to other disk blocks
+        //
+        case BTREE_ROOT_NODE:
+        case BTREE_INTERIOR_NODE:
+            // Scan through key/ptr pairs
+            // and recurse if possible
+            for (offset=0;offset<b.info.numkeys;offset++)
+            {
+                rc=b.GetKey(offset,testkey);
+                if (rc) {  return rc; }
+                if (key<testkey || key==testkey) {
+                    // OK, so we now have the first key that's larger
+                    // so we ned to recurse on the ptr immediately previous to
+                    // this one, if it exists
+                    rc=b.GetPtr(offset,ptr);
+                    if (rc) { return rc; }
+                    return LookupOrUpdateInternal(ptr,op,key,value);
+                }
+            }
+            // if we got here, we need to go to the next pointer, if it exists
+            if (b.info.numkeys>0)
+            {
+                rc=b.GetPtr(b.info.numkeys,ptr);
+                if (rc) { return rc; }
+                return LookupOrUpdateInternal(ptr,op,key,value);
+            }
+            else {
+                // There are no keys at all on this node, so nowhere to go
+                return ERROR_NONEXISTENT;
+            }
+            break;
+            
+        //
+        // Leaf nodes: store keys and their associated values
+        //
+        case BTREE_LEAF_NODE:
+            // Scan through keys looking for matching value
+            for (offset=0;offset<b.info.numkeys;offset++)
+            {
+                rc=b.GetKey(offset,testkey);
+                if (rc) {  return rc; }
+                if (testkey==key) {
+                    if (op==BTREE_OP_LOOKUP) {
+                        return b.GetVal(offset,value);
+                    } else {
+                        return b.SetVal(offset,value);
+                        // WROTE ME
+                    }
+                }
+            }
+            return ERROR_NONEXISTENT;
+            break;
+        default:
+            // We can't be looking at anything other than
+            // a root, internal, or leaf [node]
+            return ERROR_INSANE;
+            break;
+    }  
+
    /*
     Check if key already exists (it shouldn't)
 
@@ -454,6 +530,12 @@ ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
 }
 
 
+/*
+ * Recursive function that, given the proper leaf node, will try to insert the key-val
+ * pair there. If it needs to do any splitting, it will recurse up the B-tree, adding 
+ * pointers and splitting as necessary until it either (1) does not need to do any more
+ * splitting, or (2) reaches the root node
+ */
 void BTreeIndex::TryInsert(const KEY_T &key, const VALUE_T &value, const SIZE_T &node)
 {
 
@@ -493,6 +575,7 @@ void BTreeIndex::TryInsert(const KEY_T &key, const VALUE_T &value, const SIZE_T 
  */
 ERROR_T BTreeIndex::Update(const KEY_T &key, const VALUE_T &value)
 {
+    // WROTE ME
     return LookupOrUpdateInternal(superblock.info.rootnode, BTREE_OP_UPDATE, key, value);
 }
 

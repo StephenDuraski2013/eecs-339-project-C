@@ -274,8 +274,10 @@ ERROR_T BTreeNode::SetPtr(const SIZE_T offset, const SIZE_T &ptr)
   return ERROR_NOERROR;
 }
 
-
-
+/*
+ * Given the offset within a node, set the value at that location 
+ * to be equal to the given value 'v'
+ */
 ERROR_T BTreeNode::SetVal(const SIZE_T offset, const VALUE_T &v)
 {
   char *p=ResolveVal(offset);

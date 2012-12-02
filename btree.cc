@@ -36,15 +36,15 @@ KeyValuePair & KeyValuePair::operator=(const KeyValuePair &rhs)
 }
 
 // Constructor
-BTreeIndex::BTreeIndex(SIZE_T keysize, 
-		       SIZE_T valuesize,
-		       BufferCache *cache,
-		       bool unique) 
+BTreeIndex::BTreeIndex(SIZE_T keysize,
+                       SIZE_T valuesize,
+                       BufferCache *cache,
+                       bool unique)
 {
-  superblock.info.keysize=keysize;
-  superblock.info.valuesize=valuesize;
-  buffercache=cache;
-  // note: ignoring unique now
+    superblock.info.keysize=keysize;
+    superblock.info.valuesize=valuesize;
+    buffercache=cache;
+    // note: ignoring unique now
 }
 
 // Default constructor
@@ -59,9 +59,9 @@ BTreeIndex::BTreeIndex()
 //
 BTreeIndex::BTreeIndex(const BTreeIndex &rhs)
 {
-  buffercache=rhs.buffercache;
-  superblock_index=rhs.superblock_index;
-  superblock=rhs.superblock;
+    buffercache=rhs.buffercache;
+    superblock_index=rhs.superblock_index;
+    superblock=rhs.superblock;
 }
 
 // Destructor
@@ -78,29 +78,34 @@ BTreeIndex & BTreeIndex::operator=(const BTreeIndex &rhs)
 
 /*
  * AllocateNode(SIZE_T &n)
- *
+ * Takes the first free node in the freelist
+ * assume freelist has all the nodes that are available
+ * if nothing available will return error
  */
 ERROR_T BTreeIndex::AllocateNode(SIZE_T &n)
 {
-  n=superblock.info.freelist;
-
-  if (n==0) { 
-    return ERROR_NOSPACE;
-  }
-
-  BTreeNode node;
-
-  node.Unserialize(buffercache,n);
-
-  assert(node.info.nodetype==BTREE_UNALLOCATED_BLOCK);
-
-  superblock.info.freelist=node.info.freelist;
-
-  superblock.Serialize(buffercache,superblock_index);
-
-  buffercache->NotifyAllocateBlock(n);
-
-  return ERROR_NOERROR;
+    n=superblock.info.freelist;
+    
+    // make sure node is not zero because that would mean
+    // we havent allocated a root node yet
+    if (n==0)
+    {
+        return ERROR_NOSPACE;
+    }
+    
+    BTreeNode node;
+    
+    node.Unserialize(buffercache,n);
+    
+    assert(node.info.nodetype==BTREE_UNALLOCATED_BLOCK);
+    
+    superblock.info.freelist=node.info.freelist;
+    
+    superblock.Serialize(buffercache,superblock_index);
+    
+    buffercache->NotifyAllocateBlock(n);
+    
+    return ERROR_NOERROR;
 }
 
 /*
@@ -109,26 +114,25 @@ ERROR_T BTreeIndex::AllocateNode(SIZE_T &n)
  */
 ERROR_T BTreeIndex::DeallocateNode(const SIZE_T &n)
 {
-  BTreeNode node;
-
-  node.Unserialize(buffercache,n);
-
-  assert(node.info.nodetype!=BTREE_UNALLOCATED_BLOCK);
-
-  node.info.nodetype=BTREE_UNALLOCATED_BLOCK;
-
-  node.info.freelist=superblock.info.freelist;
-
-  node.Serialize(buffercache,n);
-
-  superblock.info.freelist=n;
-
-  superblock.Serialize(buffercache,superblock_index);
-
-  buffercache->NotifyDeallocateBlock(n);
-
-  return ERROR_NOERROR;
-
+    BTreeNode node;
+    
+    node.Unserialize(buffercache,n);
+    
+    assert(node.info.nodetype!=BTREE_UNALLOCATED_BLOCK);
+    
+    node.info.nodetype=BTREE_UNALLOCATED_BLOCK;
+    
+    node.info.freelist=superblock.info.freelist;
+    
+    node.Serialize(buffercache,n);
+    
+    superblock.info.freelist=n;
+    
+    superblock.Serialize(buffercache,superblock_index);
+    
+    buffercache->NotifyDeallocateBlock(n);
+    
+    return ERROR_NOERROR;
 }
 
 /*
@@ -176,9 +180,7 @@ ERROR_T BTreeIndex::Attach(const SIZE_T initblock, const bool create)
 
     rc=newsuperblock.Serialize(buffercache,superblock_index);
 
-    if (rc) { 
-      return rc;
-    }
+    if (rc) {  return rc;  }
     
     BTreeNode newrootnode(BTREE_ROOT_NODE,
 			  superblock.info.keysize,
@@ -192,10 +194,7 @@ ERROR_T BTreeIndex::Attach(const SIZE_T initblock, const bool create)
 
     rc=newrootnode.Serialize(buffercache,superblock_index+1);
 
-    if (rc)
-    {
-      return rc;
-    }
+    if (rc) {  return rc;  }
 
     for (SIZE_T i=superblock_index+2; i<buffercache->GetNumBlocks();i++)
     {
@@ -208,10 +207,7 @@ ERROR_T BTreeIndex::Attach(const SIZE_T initblock, const bool create)
       
       rc = newfreenode.Serialize(buffercache,i);
 
-      if (rc)
-      {
-          return rc;
-      }
+      if (rc) {  return rc;  }
 
     }
   }
@@ -250,11 +246,13 @@ ERROR_T BTreeIndex::LookupOrUpdateInternal(const SIZE_T &node,
     
     rc= b.Unserialize(buffercache,node);
     
-    if (rc!=ERROR_NOERROR) {
+    if (rc!=ERROR_NOERROR)
+    {
         return rc;
     }
     
-    switch (b.info.nodetype) {
+    switch (b.info.nodetype)
+    {
         //
         // Internal nodes:
         // store keys and pointers (disk block #) to other disk blocks
@@ -267,7 +265,8 @@ ERROR_T BTreeIndex::LookupOrUpdateInternal(const SIZE_T &node,
             {
                 rc=b.GetKey(offset,testkey);
                 if (rc) {  return rc; }
-                if (key<testkey || key==testkey) {
+                if (key<testkey || key==testkey)
+                {
                     // OK, so we now have the first key that's larger
                     // so we ned to recurse on the ptr immediately previous to
                     // this one, if it exists
@@ -283,7 +282,8 @@ ERROR_T BTreeIndex::LookupOrUpdateInternal(const SIZE_T &node,
                 if (rc) { return rc; }
                 return LookupOrUpdateInternal(ptr,op,key,value);
             }
-            else {
+            else
+            {
                 // There are no keys at all on this node, so nowhere to go
                 return ERROR_NONEXISTENT;
             }
@@ -299,9 +299,12 @@ ERROR_T BTreeIndex::LookupOrUpdateInternal(const SIZE_T &node,
                 rc=b.GetKey(offset,testkey);
                 if (rc) {  return rc; }
                 if (testkey==key) {
-                    if (op==BTREE_OP_LOOKUP) {
+                    if (op==BTREE_OP_LOOKUP)
+                    {
                         return b.GetVal(offset,value);
-                    } else {
+                    }
+                    else
+                    {
                         return b.SetVal(offset,value);
                         // WROTE ME
                     }
@@ -337,28 +340,30 @@ static ERROR_T PrintNode(ostream &os, SIZE_T nodenum, BTreeNode &b, BTreeDisplay
     {
         os << nodenum << ": ";
     }
-    else {
-    }
+    else { }
     
     switch (b.info.nodetype) {
         case BTREE_ROOT_NODE:
         case BTREE_INTERIOR_NODE:
-            if (dt==BTREE_SORTED_KEYVAL) {
-            } else {
-                if (dt==BTREE_DEPTH_DOT) {
-                } else {
+            if (dt==BTREE_SORTED_KEYVAL) {}
+            else
+            {
+                if (dt==BTREE_DEPTH_DOT) {}
+                else
+                {
                     os << "Interior: ";
                 }
                 for (offset=0;offset<=b.info.numkeys;offset++)
                 {
                     rc=b.GetPtr(offset,ptr);
-                    if (rc) { return rc; }
+                    if (rc) {  return rc;  }
                     os << "*" << ptr << " ";
                     // Last pointer
                     if (offset==b.info.numkeys) break;
                     rc=b.GetKey(offset,key);
                     if (rc) {  return rc; }
-                    for (i=0;i<b.info.keysize;i++) {
+                    for (i=0;i<b.info.keysize;i++)
+                    {
                         os << key.data[i];
                     }
                     os << " ";
@@ -366,53 +371,54 @@ static ERROR_T PrintNode(ostream &os, SIZE_T nodenum, BTreeNode &b, BTreeDisplay
             }
             break;
         case BTREE_LEAF_NODE:
-            if (dt==BTREE_DEPTH_DOT || dt==BTREE_SORTED_KEYVAL) {
-            } else {
+            if (dt==BTREE_DEPTH_DOT || dt==BTREE_SORTED_KEYVAL) {}
+            else
+            {
                 os << "Leaf: ";
             }
-            for (offset=0;offset<b.info.numkeys;offset++) {
-                if (offset==0) {
+            for (offset=0;offset<b.info.numkeys;offset++)
+            {
+                if (offset==0)
+                {
                     // special case for first pointer
                     rc=b.GetPtr(offset,ptr);
-                    if (rc) { return rc; }
-                    if (dt!=BTREE_SORTED_KEYVAL) {
+                    if (rc) {  return rc;  }
+                    if (dt!=BTREE_SORTED_KEYVAL)
+                    {
                         os << "*" << ptr << " ";
                     }
                 }
-                if (dt==BTREE_SORTED_KEYVAL)
-                {
-                    os << "(";
-                }
+                if (dt==BTREE_SORTED_KEYVAL) {  os << "(";  }
                 rc=b.GetKey(offset,key);
+                
                 if (rc) {  return rc; }
                 for (i=0;i<b.info.keysize;i++)
                 {
                     os << key.data[i];
                 }
-                if (dt==BTREE_SORTED_KEYVAL)
-                {
-                    os << ",";
-                }
-                else {
-                    os << " ";
-                }
+                
+                if (dt==BTREE_SORTED_KEYVAL) {  os << ",";  }
+                else {  os << " ";  }
+                
                 rc=b.GetVal(offset,value);
                 if (rc) {  return rc; }
-                for (i=0;i<b.info.valuesize;i++) { 
+                
+                for (i=0;i<b.info.valuesize;i++)
+                {
                     os << value.data[i];
                 }
-                if (dt==BTREE_SORTED_KEYVAL)
-                {
-                    os << ")\n";
-                } else {
-                    os << " ";
-                }
+                
+                if (dt==BTREE_SORTED_KEYVAL) {  os << ")\n";  }
+                else {  os << " ";  }
             }
             break;
         default:
-            if (dt==BTREE_DEPTH_DOT) { 
+            if (dt==BTREE_DEPTH_DOT)
+            {
                 os << "Unknown("<<b.info.nodetype<<")";
-            } else {
+            }
+            else
+            {
                 os << "Unsupported Node Type " << b.info.nodetype ;
             }
     }
@@ -424,6 +430,7 @@ static ERROR_T PrintNode(ostream &os, SIZE_T nodenum, BTreeNode &b, BTreeDisplay
 
 /*
  * Name:    Lookup
+ * Purpose: return the value associated with the key
  * Params:  const KEY_T &key,
  *          VALUE_T &value
  * Returns: 
@@ -579,13 +586,19 @@ ERROR_T BTreeIndex::Update(const KEY_T &key, const VALUE_T &value)
     return LookupOrUpdateInternal(superblock.info.rootnode, BTREE_OP_UPDATE, key, value);
 }
 
-  
+
+/*
+ * Name:    Delete
+ * Purpose: delete the key/value pairassociated with the given key
+ * Params:  const KEY_T &key
+ * Returns:
+ */
 ERROR_T BTreeIndex::Delete(const KEY_T &key)
 {
-  // This is optional extra credit for F12
-  //
-  // 
-  return ERROR_UNIMPL;
+    // This is optional extra credit for F12
+    //
+    //
+    return ERROR_UNIMPL;
 }
 
   
@@ -618,7 +631,7 @@ ERROR_T BTreeIndex::DisplayInternal(const SIZE_T &node,
     
     rc = PrintNode(o,node,b,display_type);
     
-    if (rc) { return rc; }
+    if (rc) {  return rc;  }
     
     if (display_type==BTREE_DEPTH_DOT)
     {
@@ -672,17 +685,17 @@ ERROR_T BTreeIndex::DisplayInternal(const SIZE_T &node,
  */
 ERROR_T BTreeIndex::Display(ostream &o, BTreeDisplayType display_type) const
 {
-  ERROR_T rc;
-  if (display_type==BTREE_DEPTH_DOT)
-  {
-    o << "digraph tree { \n";
-  }
-  rc=DisplayInternal(superblock.info.rootnode,o,display_type);
-  if (display_type==BTREE_DEPTH_DOT)
-  {
-    o << "}\n";
-  }
-  return ERROR_NOERROR;
+    ERROR_T rc;
+    if (display_type==BTREE_DEPTH_DOT)
+    {
+        o << "digraph tree { \n";
+    }
+    rc=DisplayInternal(superblock.info.rootnode,o,display_type);
+    if (display_type==BTREE_DEPTH_DOT)
+    {
+        o << "}\n";
+    }
+    return ERROR_NOERROR;
 }
 
 
@@ -696,22 +709,22 @@ ERROR_T BTreeIndex::Display(ostream &o, BTreeDisplayType display_type) const
  */
 ERROR_T BTreeIndex::SanityCheck() const
 {
-  // WRITE ME
-  return ERROR_UNIMPL;
+    // WRITE ME
+    return ERROR_UNIMPL;
 }
-  
+
 
 /*
  * Name:    Print
- * Purpose: 
+ * Purpose:
  * Params:  ostream &os
  *
  * TODO................................................................
  */
 ostream & BTreeIndex::Print(ostream &os) const
 {
-  // WRITE ME
-  return os;
+    // WRITE ME
+    return os;
 }
 
 

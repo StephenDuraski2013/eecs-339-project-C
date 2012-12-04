@@ -231,6 +231,96 @@ ERROR_T BTreeIndex::Detach(SIZE_T &initblock)
   return superblock.Serialize(buffercache,superblock_index);
 }
  
+/*
+ * LookupNode
+ *
+ * Looks up the node where a key should go
+ */
+ERROR_T BTreeIndex::LookupNode(SIZE_T &node, const KEY_T &key, const VALUE_T &value)
+{
+    // Make sure not to pass superblock.info.rootnode as the 1st parameter
+    // because that's the sort of thing we don't want to change
+    BTreeNode b;
+    ERROR_T rc;
+    SIZE_T offset;
+    KEY_T testkey;
+    KEY_T nextkey;
+    SIZE_T ptr;
+    
+    b.Unserialize(buffercache, node); 
+    switch (b.info.nodetype) {
+        // Internal nodes:
+        // store keys and pointers (disk block #) to other disk blocks
+        case BTREE_ROOT_NODE:
+        case BTREE_INTERIOR_NODE:
+            // Scan through key/ptr pairs
+            // and recurse if possible
+            for (offset=0;offset<b.info.numkeys;offset++)
+            {
+                rc=b.GetKey(offset,testkey);
+                if (rc) {  return rc; }
+                if (key<testkey || key==testkey) {
+                    // OK, so we now have the first key that's larger
+                    // so we ned to recurse on the ptr immediately previous to
+                    // this one, if it exists
+                    rc=b.GetPtr(offset,ptr);
+                    if (rc) { return rc; }
+                    node = ptr;
+                    return LookupNode(node, key, value);
+                }
+            }
+            // if we got here, we need to go to the next pointer, if it exists
+            if (b.info.numkeys>0)
+            {
+                rc=b.GetPtr(b.info.numkeys,ptr);
+                if (rc) { return rc; }
+                node = ptr;
+                return LookupNode(node, key, value);
+            }
+            else {
+                // There are no keys at all on this node, so nowhere to go
+                return ERROR_NONEXISTENT;
+            }
+            break;
+            
+        //
+        // Leaf nodes: store keys and their associated values
+        //
+        case BTREE_LEAF_NODE:
+            // Scan through keys looking for matching value
+            if (b.info.numkeys > 0) {
+                for (offset=0;offset<b.info.numkeys;offset++) {
+                    if (offset == b.info.numkeys - 1) {
+                        // Last element - we definitely want to put the key-value 
+                        // in the newly created slot
+                        SIZE_T newLastElement = b.info.numkeys;
+                        b.info.numkeys++;
+                        b.SetKey(newLastElement, key);
+                        b.SetVal(newLastElement, value);
+                        break;
+                    } else {
+                        // Check value; set if in proper range and break if it is,
+                        // Else, move on
+                    }
+                }
+            } else {
+                b.info.numkeys++;
+                b.SetKey(0, key);
+                b.SetVal(0, value);
+            }
+            b.Serialize(buffercache, node);
+            return ERROR_NOERROR; 
+            break;
+        default:
+            // We can't be looking at anything other than
+            // a root, internal, or leaf [node]
+            return ERROR_INSANE;
+            break;
+    }  
+    
+    return ERROR_INSANE;
+}
+
 
 /*
  * LookupOrUpdateInternal(const SIZE_T &node, const BTreeOp op,
@@ -443,93 +533,52 @@ ERROR_T BTreeIndex::Lookup(const KEY_T &key, VALUE_T &value)
  */
 ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
 {
-    // If root node has not yet been initialized, initialize it
-    if (superblock.info.rootnode == 0) {
-        SIZE_T node_num;
-        ERROR_T error;
-        if ((error = AllocateNode(node_num)) != ERROR_NOERROR)
-            return error;
-        superblock.info.rootnode = node_num;
-    }
+    // Insertion of existing keys should fail (update is the appropriate operation)
 
     BTreeNode node;
-    node.Unserialize(buffercache,n);
+    node.Unserialize(buffercache,superblock.info.rootnode);
 
+    if (node.info.numkeys == 0) { // This is the case when root is empty
+        BTreeNode leaf(BTREE_LEAF_NODE, 
+            superblock.info.keysize,
+            superblock.info.valuesize,
+            buffercache->GetBlockSize());
+        
+        SIZE_T leftNode;
+        SIZE_T rightNode;
+        ERROR_T error;
+        // Allocate the beginning leaf nodes of root
+        if ((error = AllocateNode(leftNode)) != ERROR_NOERROR)
+            return error;
+        if ((error = AllocateNode(rightNode)) != ERROR_NOERROR)
+            return error;
+        // Write these new blocks to the disk as leafs
+        // (see Attach for how the root and superblock are initialized
+        // and written - AllocateNode does not handle all of it!)
+        leaf.Serialize(buffercache, leftNode); 
+        leaf.Serialize(buffercache, rightNode);
+        node.info.numkeys += 1;
+        node.SetKey(0, key);
+        node.SetPtr(0, leftNode);
+        node.SetPtr(1, rightNode);
+        node.Serialize(buffercache, superblock.info.rootnode);
+    } 
 
-
-    // Search for the proper place (copied from LookupOrUpdate - needs to be changed)
-    switch (b.info.nodetype) {
-        //
-        // Internal nodes:
-        // store keys and pointers (disk block #) to other disk blocks
-        //
-        case BTREE_ROOT_NODE:
-        case BTREE_INTERIOR_NODE:
-            // Scan through key/ptr pairs
-            // and recurse if possible
-            for (offset=0;offset<b.info.numkeys;offset++)
-            {
-                rc=b.GetKey(offset,testkey);
-                if (rc) {  return rc; }
-                if (key<testkey || key==testkey) {
-                    // OK, so we now have the first key that's larger
-                    // so we ned to recurse on the ptr immediately previous to
-                    // this one, if it exists
-                    rc=b.GetPtr(offset,ptr);
-                    if (rc) { return rc; }
-                    return LookupOrUpdateInternal(ptr,op,key,value);
-                }
-            }
-            // if we got here, we need to go to the next pointer, if it exists
-            if (b.info.numkeys>0)
-            {
-                rc=b.GetPtr(b.info.numkeys,ptr);
-                if (rc) { return rc; }
-                return LookupOrUpdateInternal(ptr,op,key,value);
-            }
-            else {
-                // There are no keys at all on this node, so nowhere to go
-                return ERROR_NONEXISTENT;
-            }
-            break;
-            
-        //
-        // Leaf nodes: store keys and their associated values
-        //
-        case BTREE_LEAF_NODE:
-            // Scan through keys looking for matching value
-            for (offset=0;offset<b.info.numkeys;offset++)
-            {
-                rc=b.GetKey(offset,testkey);
-                if (rc) {  return rc; }
-                if (testkey==key) {
-                    if (op==BTREE_OP_LOOKUP) {
-                        return b.GetVal(offset,value);
-                    } else {
-                        return b.SetVal(offset,value);
-                        // WROTE ME
-                    }
-                }
-            }
-            return ERROR_NONEXISTENT;
-            break;
-        default:
-            // We can't be looking at anything other than
-            // a root, internal, or leaf [node]
-            return ERROR_INSANE;
-            break;
-    }  
-
+    SIZE_T correctNode = superblock.info.rootnode; 
+   
+    VALUE_T temp;
+    if (ERROR_NONEXISTENT == Lookup(key, temp))
+        LookupNode(correctNode, key, value);
+    else
+        return ERROR_CONFLICT;
    /*
-    Check if key already exists (it shouldn't)
-
     Find leaf
     Try Insert(key, value, leaf);
     */
-    return ERROR_UNIMPL;
+    return ERROR_NOERROR;
 }
 
-
+#if 0
 /*
  * Recursive function that, given the proper leaf node, will try to insert the key-val
  * pair there. If it needs to do any splitting, it will recurse up the B-tree, adding 
@@ -563,7 +612,7 @@ void BTreeIndex::TryInsert(const KEY_T &key, const VALUE_T &value, const SIZE_T 
     */
 
 }
-
+#endif
 
 /*
  * Name:    Update
@@ -576,7 +625,8 @@ void BTreeIndex::TryInsert(const KEY_T &key, const VALUE_T &value, const SIZE_T 
 ERROR_T BTreeIndex::Update(const KEY_T &key, const VALUE_T &value)
 {
     // WROTE ME
-    return LookupOrUpdateInternal(superblock.info.rootnode, BTREE_OP_UPDATE, key, value);
+    VALUE_T valueWritable = value;
+    return LookupOrUpdateInternal(superblock.info.rootnode, BTREE_OP_UPDATE, key, valueWritable);
 }
 
   
@@ -708,10 +758,10 @@ ERROR_T BTreeIndex::SanityCheck() const
  *
  * TODO................................................................
  */
-ostream & BTreeIndex::Print(ostream &os) const
+ostream & BTreeIndex::Print(ostream &os=std::cout) const
 {
-  // WRITE ME
-  return os;
+    BTreeIndex::Display(os, BTREE_DEPTH_DOT);
+    return os;
 }
 
 

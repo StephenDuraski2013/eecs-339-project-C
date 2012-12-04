@@ -58,6 +58,7 @@ class BTreeIndex {
 				      const KEY_T &key,
 				      VALUE_T &val);
   
+  ERROR_T      LookupNode(SIZE_T &node, const KEY_T &key, const VALUE_T &value);
 
   ERROR_T      DisplayInternal(const SIZE_T &node,
 			       ostream &o, 

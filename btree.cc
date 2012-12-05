@@ -232,7 +232,7 @@ ERROR_T BTreeIndex::Detach(SIZE_T &initblock)
  *
  * Looks up the node where a key should go
  */
-ERROR_T BTreeIndex::PlaceKeyVal(SIZE_T &node, const KEY_T &key, const VALUE_T &value)
+ERROR_T BTreeIndex::PlaceKeyVal(SIZE_T &node, SIZE_T &parent, const KEY_T &key, const VALUE_T &value)
 {
     // Make sure not to pass superblock.info.rootnode as the 1st parameter
     // because that's the sort of thing we don't want to change
@@ -263,7 +263,7 @@ ERROR_T BTreeIndex::PlaceKeyVal(SIZE_T &node, const KEY_T &key, const VALUE_T &v
                     rc=b.GetPtr(offset,ptr);
                     if (rc) { return rc; }
                     node = ptr;
-                    return PlaceKeyVal(node, key, value);
+                    return PlaceKeyVal(node, parent, key, value);
                 }
             }
             // if we got here, we need to go to the next pointer, if it exists
@@ -272,7 +272,7 @@ ERROR_T BTreeIndex::PlaceKeyVal(SIZE_T &node, const KEY_T &key, const VALUE_T &v
                 rc=b.GetPtr(b.info.numkeys,ptr);
                 if (rc) { return rc; }
                 node = ptr;
-                return PlaceKeyVal(node, key, value);
+                return PlaceKeyVal(node, parent, key, value);
             }
             else {
                 // There are no keys at all on this node, so nowhere to go
@@ -285,36 +285,40 @@ ERROR_T BTreeIndex::PlaceKeyVal(SIZE_T &node, const KEY_T &key, const VALUE_T &v
             // Scan through keys looking for matching value
             numkeys = b.info.numkeys++; // This has to be done before setting keys/vals for the
                                         // last element, and is done in any case anyway
-            if (numkeys > 0) {
+            if (numkeys == b.info.GetNumSlotsAsLeaf()) {
+                return ERROR_NOSPACE; // UNIMPLEMENTED: handling full leaves
+            } else if (numkeys > 0) {
                 for (offset=0, entriesToCopy = numkeys;
                         offset < numkeys;
                         offset++, entriesToCopy--) {
-                    b.GetKey(offset, testkey);
+                    if ((rc = b.GetKey(offset, testkey)))
+                        return rc;
                     // If the new key is less than the current key, shift all greater keys up
                     // and put this new key in the current location
                     if (key < testkey) {
                         void *src = b.ResolveKeyVal(offset);
                         void *dest = b.ResolveKeyVal(offset + 1);
                         memmove(dest, src, entriesToCopy * (b.info.keysize + b.info.valuesize));
-                        b.SetKey(offset, key);
-                        b.SetVal(offset, value);
+                        if ((rc = b.SetKey(offset, key)) ||
+                            (rc = b.SetVal(offset, value)))
+                            return rc;
                         break;
                     }
                     if (offset == numkeys - 1) { 
-                        // If we are on the last key, and the new key was not less, it is the 
-                        // new last key
-                        SIZE_T newLastElement = numkeys;
-                        b.SetKey(newLastElement, key);
-                        b.SetVal(newLastElement, value);
+                        // If we are on the last key, and the new key was not less than this one, 
+                        // then the new key becomes the last key
+                        if ((rc = b.SetKey(numkeys, key)) ||
+                            (rc = b.SetVal(numkeys, value)))
+                            return rc;
                         break;
                     }
                 }
             } else { // 0 keys in table
-                b.SetKey(0, key);
-                b.SetVal(0, value);
+                if ((rc = b.SetKey(0, key)) ||
+                    (rc = b.SetVal(0, value)))
+                    return rc;
             }
-            b.Serialize(buffercache, node); // Write any changes made
-            return ERROR_NOERROR; 
+            return b.Serialize(buffercache, node); // Write any changes made
             break;
 
         default:
@@ -555,10 +559,10 @@ ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
 {
     // Insertion of existing keys should fail (update is the appropriate operation)
 
-    BTreeNode node;
-    node.Unserialize(buffercache,superblock.info.rootnode);
+    BTreeNode root;
+    root.Unserialize(buffercache,superblock.info.rootnode);
 
-    if (node.info.numkeys == 0) { // This is the case when root is empty
+    if (root.info.numkeys == 0) { // This is the case when root is empty
         BTreeNode leaf(BTREE_LEAF_NODE, 
             superblock.info.keysize,
             superblock.info.valuesize,
@@ -577,21 +581,21 @@ ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
         // and written - AllocateNode does not handle all of it!)
         leaf.Serialize(buffercache, leftNode); 
         leaf.Serialize(buffercache, rightNode);
-        node.info.numkeys += 1;
-        node.SetKey(0, key);
-        node.SetPtr(0, leftNode);
-        node.SetPtr(1, rightNode);
-        node.Serialize(buffercache, superblock.info.rootnode);
+        root.info.numkeys += 1;
+        root.SetKey(0, key);
+        root.SetPtr(0, leftNode);
+        root.SetPtr(1, rightNode);
+        root.Serialize(buffercache, superblock.info.rootnode);
     } 
 
-    SIZE_T correctNode = superblock.info.rootnode; 
-   
+    SIZE_T node = superblock.info.rootnode; 
+    SIZE_T parentNode = node;
     VALUE_T temp;
+
     if (ERROR_NONEXISTENT == Lookup(key, temp))
-        PlaceKeyVal(correctNode, key, value);
+        return PlaceKeyVal(node, parentNode, key, value);
     else
         return ERROR_CONFLICT;
-    return ERROR_NOERROR;
 }
 
 

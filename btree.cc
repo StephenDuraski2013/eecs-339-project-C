@@ -233,7 +233,7 @@ ERROR_T BTreeIndex::Detach(SIZE_T &initblock)
  *
  * Tells whether a node is full or not
  */
-bool BTreeIndex::IsNodeFull(SIZE_T node)
+bool BTreeIndex::IsNodeFull(const SIZE_T node)
 {
     BTreeNode b;
     b.Unserialize(buffercache, node);
@@ -253,24 +253,23 @@ bool BTreeIndex::IsNodeFull(SIZE_T node)
  * SplitNode(
  *
  */
-ERROR_T BTreeIndex::SplitNode(SIZE_T node, SIZE_T &newNode, KEY_T &splitKey)
+ERROR_T BTreeIndex::SplitNode(const SIZE_T node, SIZE_T &newNode, KEY_T &splitKey)
 {
     // in comments, n = left.info.numkeys
     BTreeNode left;
     SIZE_T keysLeft, keysRight;
     ERROR_T error;
-
-    if ((error = AllocateNode(newNode)) != ERROR_NOERROR)
-        return error;
-
     left.Unserialize(buffercache, node);
     BTreeNode right = left;
-    right.Serialize(buffercache, newNode);
+
+    if ((error = AllocateNode(newNode)))
+        return error;
+    if ((error = right.Serialize(buffercache, newNode)))
+        return error;
     
     if (left.info.nodetype == BTREE_LEAF_NODE) {
         keysLeft = (left.info.numkeys + 2) / 2; // Ceiling of (n+1) / 2
         keysRight = left.info.numkeys - keysLeft;
-        right.info.numkeys = keysRight;
 
         left.GetKey(keysLeft - 1, splitKey);
 
@@ -281,7 +280,6 @@ ERROR_T BTreeIndex::SplitNode(SIZE_T node, SIZE_T &newNode, KEY_T &splitKey)
     } else { // Root or intermediate node
         keysLeft = left.info.numkeys / 2; // Floor of n / 2
         keysRight = left.info.numkeys - keysLeft - 1; // one key will be promoted
-        right.info.numkeys = keysRight;
         
         left.GetKey(keysLeft, splitKey);
 
@@ -291,13 +289,14 @@ ERROR_T BTreeIndex::SplitNode(SIZE_T node, SIZE_T &newNode, KEY_T &splitKey)
         memcpy(dest, src, keysRight * (left.info.keysize + sizeof(SIZE_T)) + sizeof(SIZE_T));
     }
     left.info.numkeys = keysLeft;
-    right.Serialize(buffercache, newNode);
+    right.info.numkeys = keysRight;
     left.Serialize(buffercache, node);
+    right.Serialize(buffercache, newNode);
     return ERROR_NOERROR; 
 }
 
 
-ERROR_T BTreeIndex::AddKeyPtrVal(SIZE_T node, KEY_T key, VALUE_T value, SIZE_T newNode)
+ERROR_T BTreeIndex::AddKeyPtrVal(const SIZE_T node, const KEY_T &key, const VALUE_T &value, SIZE_T newNode)
 {
     BTreeNode b;
     b.Unserialize(buffercache, node);
@@ -364,12 +363,12 @@ ERROR_T BTreeIndex::AddKeyPtrVal(SIZE_T node, KEY_T key, VALUE_T value, SIZE_T n
 
 }
 
-ERROR_T BTreeIndex::AddNewKeyPtr(SIZE_T node, KEY_T splitKey, SIZE_T newNode)
+ERROR_T BTreeIndex::AddNewKeyPtr(const SIZE_T node, const KEY_T &splitKey, SIZE_T newNode)
 {
     return AddKeyPtrVal(node, splitKey, VALUE_T(), newNode);
 }
 
-ERROR_T BTreeIndex::AddNewKeyVal(SIZE_T node, KEY_T key, VALUE_T value)
+ERROR_T BTreeIndex::AddNewKeyVal(const SIZE_T node, const KEY_T &key, const VALUE_T &value)
 {
     return AddKeyPtrVal(node, key, value, 0);
 }
@@ -382,8 +381,6 @@ ERROR_T BTreeIndex::AddNewKeyVal(SIZE_T node, KEY_T key, VALUE_T value)
  */
 ERROR_T BTreeIndex::PlaceKeyVal(SIZE_T node, SIZE_T parent, const KEY_T &key, const VALUE_T &value)
 {
-    // Make sure not to pass superblock.info.rootnode as the 1st parameter
-    // because that's the sort of thing we don't want to change
     BTreeNode b;
     ERROR_T rc;
     SIZE_T offset;
@@ -717,12 +714,7 @@ ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
     SIZE_T oldRoot=superblock.info.rootnode, newNode;
     KEY_T splitKey;
 
-    BTreeNode interiorLeft (BTREE_INTERIOR_NODE, 
-        superblock.info.keysize,
-        superblock.info.valuesize,
-        buffercache->GetBlockSize());
-
-    BTreeNode interiorRight (BTREE_INTERIOR_NODE, 
+    BTreeNode interior(BTREE_INTERIOR_NODE, 
         superblock.info.keysize,
         superblock.info.valuesize,
         buffercache->GetBlockSize());
@@ -731,13 +723,16 @@ ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
         error = PlaceKeyVal(superblock.info.rootnode, superblock.info.rootnode, key, value);
         if (IsNodeFull(superblock.info.rootnode)) {
             SplitNode(oldRoot, newNode, splitKey);
-            interiorLeft.Unserialize(buffercache, oldRoot);
-            interiorRight.Unserialize(buffercache, newNode);
-            interiorLeft.Serialize(buffercache, oldRoot);
-            interiorRight.Serialize(buffercache, newNode);
+            // Load the node data into Interior nodes (indead of root nodes)
+            // and then save this new node status onto disk (for both nodes)
+            interior.Unserialize(buffercache, oldRoot);
+            interior.Serialize(buffercache, oldRoot);
+            interior.Unserialize(buffercache, newNode);
+            interior.Serialize(buffercache, newNode);
+
+            // Make new root node
             if ((error = AllocateNode(superblock.info.rootnode)) != ERROR_NOERROR)
                 return error;
-            root.Serialize(buffercache, superblock.info.rootnode);
             root.info.numkeys = 1;
             root.SetKey(0, splitKey);
             root.SetPtr(0, oldRoot);

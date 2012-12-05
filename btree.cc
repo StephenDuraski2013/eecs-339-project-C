@@ -245,6 +245,7 @@ bool BTreeIndex::IsNodeFull(SIZE_T node)
         case BTREE_LEAF_NODE:
             return (b.info.GetNumSlotsAsLeaf() == b.info.numkeys);
     }
+    cerr << "Invalid node type passed to IsNodeFull in btree.cc" << endl;
     return false;
 }
 
@@ -263,13 +264,8 @@ ERROR_T BTreeIndex::SplitNode(SIZE_T node, SIZE_T &newNode, KEY_T &splitKey)
         return error;
 
     left.Unserialize(buffercache, node);
-    
-    BTreeNode right(left.info.nodetype, 
-        superblock.info.keysize,
-        superblock.info.valuesize,
-        buffercache->GetBlockSize());
+    BTreeNode right = left;
     right.Serialize(buffercache, newNode);
-    right.Unserialize(buffercache, newNode);
     
     if (left.info.nodetype == BTREE_LEAF_NODE) {
         keysLeft = (left.info.numkeys + 2) / 2; // Ceiling of (n+1) / 2
@@ -283,7 +279,7 @@ ERROR_T BTreeIndex::SplitNode(SIZE_T node, SIZE_T &newNode, KEY_T &splitKey)
 
         memcpy(dest, src, keysRight * (left.info.keysize + left.info.valuesize));
     } else { // Root or intermediate node
-        keysLeft = (left.info.numkeys + 1) / 2; // Floor of n / 2
+        keysLeft = left.info.numkeys / 2; // Floor of n / 2
         keysRight = left.info.numkeys - keysLeft - 1; // one key will be promoted
         right.info.numkeys = keysRight;
         
@@ -418,7 +414,8 @@ ERROR_T BTreeIndex::PlaceKeyVal(SIZE_T node, SIZE_T parent, const KEY_T &key, co
                     rc=PlaceKeyVal(ptr, node, key, value);
                     if (rc) { return rc; }
                     if (IsNodeFull(ptr)) {
-                        SplitNode(ptr, newNode, splitKey);
+                        rc = SplitNode(ptr, newNode, splitKey);
+                        if (rc) { return rc; }
                         return AddNewKeyPtr(node, splitKey, newNode);
                     } else {
                         return rc;
@@ -432,7 +429,8 @@ ERROR_T BTreeIndex::PlaceKeyVal(SIZE_T node, SIZE_T parent, const KEY_T &key, co
                 rc=PlaceKeyVal(ptr, node, key, value);
                 if (rc) { return rc; }
                 if (IsNodeFull(ptr)) {
-                    SplitNode(ptr, newNode, splitKey);
+                    rc = SplitNode(ptr, newNode, splitKey);
+                    if (rc) { return rc; }
                     return AddNewKeyPtr(node, splitKey, newNode);
                 } else {
                     return rc;
@@ -445,8 +443,6 @@ ERROR_T BTreeIndex::PlaceKeyVal(SIZE_T node, SIZE_T parent, const KEY_T &key, co
             
         // Leaf nodes: store keys and their associated values
         case BTREE_LEAF_NODE:
-            if (IsNodeFull(node)) // This should eventually be unnecessary
-                return ERROR_NOSPACE;
             return AddNewKeyVal(node, key, value);
             break;
 

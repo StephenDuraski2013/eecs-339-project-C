@@ -37,7 +37,9 @@ struct KeyValuePair {
 
 };
 
-enum BTreeOp {BTREE_OP_INSERT, BTREE_OP_DELETE, BTREE_OP_UPDATE,BTREE_OP_LOOKUP};
+enum BTreeOp {BTREE_OP_INSERT, BTREE_OP_DELETE, BTREE_OP_UPDATE, BTREE_OP_LOOKUP};
+
+enum BTreeInsertType {BTREE_INS_KEYPTR, BTREE_INS_KEYVAL};
 
 enum BTreeDisplayType {BTREE_DEPTH, BTREE_DEPTH_DOT, BTREE_SORTED_KEYVAL};
 
@@ -60,6 +62,8 @@ class BTreeIndex {
   
   bool         IsNodeFull(SIZE_T node);
   ERROR_T      AddNewKeyPtr(SIZE_T node, KEY_T splitKey, SIZE_T newNode);
+  ERROR_T      AddNewKeyVal(SIZE_T node, KEY_T key, VALUE_T value);
+  ERROR_T      AddKeyPtrVal(SIZE_T node, KEY_T key, VALUE_T value, SIZE_T newNode);
   ERROR_T      SplitNode(SIZE_T node, SIZE_T &newNode, KEY_T &splitKey);
   ERROR_T      PlaceKeyVal(SIZE_T node, SIZE_T parentNode, const KEY_T &key, const VALUE_T &value);
 

@@ -12,6 +12,9 @@
 *.la
 *.a
 
+# Text editor temporary files
+*.swp
+
 # Executable files
 btree_delete
 btree_display

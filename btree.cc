@@ -10,8 +10,8 @@
  ---------------------------------------------------------------------------- */
 
 #include <assert.h>
+#include <string.h>
 #include "btree.h"
-
 KeyValuePair::KeyValuePair()
 {}
 
@@ -228,11 +228,11 @@ ERROR_T BTreeIndex::Detach(SIZE_T &initblock)
 }
  
 /*
- * LookupNode
+ * PlaceKeyVal
  *
  * Looks up the node where a key should go
  */
-ERROR_T BTreeIndex::LookupNode(SIZE_T &node, const KEY_T &key, const VALUE_T &value)
+ERROR_T BTreeIndex::PlaceKeyVal(SIZE_T &node, const KEY_T &key, const VALUE_T &value)
 {
     // Make sure not to pass superblock.info.rootnode as the 1st parameter
     // because that's the sort of thing we don't want to change
@@ -240,9 +240,10 @@ ERROR_T BTreeIndex::LookupNode(SIZE_T &node, const KEY_T &key, const VALUE_T &va
     ERROR_T rc;
     SIZE_T offset;
     KEY_T testkey;
-    KEY_T nextkey;
     SIZE_T ptr;
-    
+    SIZE_T entriesToCopy;
+    SIZE_T numkeys;
+
     b.Unserialize(buffercache, node); 
     switch (b.info.nodetype) {
         // Internal nodes:
@@ -262,7 +263,7 @@ ERROR_T BTreeIndex::LookupNode(SIZE_T &node, const KEY_T &key, const VALUE_T &va
                     rc=b.GetPtr(offset,ptr);
                     if (rc) { return rc; }
                     node = ptr;
-                    return LookupNode(node, key, value);
+                    return PlaceKeyVal(node, key, value);
                 }
             }
             // if we got here, we need to go to the next pointer, if it exists
@@ -271,7 +272,7 @@ ERROR_T BTreeIndex::LookupNode(SIZE_T &node, const KEY_T &key, const VALUE_T &va
                 rc=b.GetPtr(b.info.numkeys,ptr);
                 if (rc) { return rc; }
                 node = ptr;
-                return LookupNode(node, key, value);
+                return PlaceKeyVal(node, key, value);
             }
             else {
                 // There are no keys at all on this node, so nowhere to go
@@ -279,34 +280,43 @@ ERROR_T BTreeIndex::LookupNode(SIZE_T &node, const KEY_T &key, const VALUE_T &va
             }
             break;
             
-        //
         // Leaf nodes: store keys and their associated values
-        //
         case BTREE_LEAF_NODE:
             // Scan through keys looking for matching value
-            if (b.info.numkeys > 0) {
-                for (offset=0;offset<b.info.numkeys;offset++) {
-                    if (offset == b.info.numkeys - 1) {
-                        // Last element - we definitely want to put the key-value 
-                        // in the newly created slot
-                        SIZE_T newLastElement = b.info.numkeys;
-                        b.info.numkeys++;
+            numkeys = b.info.numkeys++; // This has to be done before setting keys/vals for the
+                                        // last element, and is done in any case anyway
+            if (numkeys > 0) {
+                for (offset=0, entriesToCopy = numkeys;
+                        offset < numkeys;
+                        offset++, entriesToCopy--) {
+                    b.GetKey(offset, testkey);
+                    // If the new key is less than the current key, shift all greater keys up
+                    // and put this new key in the current location
+                    if (key < testkey) {
+                        void *src = b.ResolveKeyVal(offset);
+                        void *dest = b.ResolveKeyVal(offset + 1);
+                        memmove(dest, src, entriesToCopy * (b.info.keysize + b.info.valuesize));
+                        b.SetKey(offset, key);
+                        b.SetVal(offset, value);
+                        break;
+                    }
+                    if (offset == numkeys - 1) { 
+                        // If we are on the last key, and the new key was not less, it is the 
+                        // new last key
+                        SIZE_T newLastElement = numkeys;
                         b.SetKey(newLastElement, key);
                         b.SetVal(newLastElement, value);
                         break;
-                    } else {
-                        // Check value; set if in proper range and break if it is,
-                        // Else, move on
                     }
                 }
-            } else {
-                b.info.numkeys++;
+            } else { // 0 keys in table
                 b.SetKey(0, key);
                 b.SetVal(0, value);
             }
-            b.Serialize(buffercache, node);
+            b.Serialize(buffercache, node); // Write any changes made
             return ERROR_NOERROR; 
             break;
+
         default:
             // We can't be looking at anything other than
             // a root, internal, or leaf [node]
@@ -395,7 +405,10 @@ ERROR_T BTreeIndex::LookupOrUpdateInternal(const SIZE_T &node,
                     }
                     else
                     {
-                        return b.SetVal(offset,value);
+                        ERROR_T rc = b.SetVal(offset, value);
+                        if (rc) 
+                            return rc;
+                        return b.Serialize(buffercache, node);
                         // WROTE ME
                     }
                 }
@@ -575,51 +588,12 @@ ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
    
     VALUE_T temp;
     if (ERROR_NONEXISTENT == Lookup(key, temp))
-        LookupNode(correctNode, key, value);
+        PlaceKeyVal(correctNode, key, value);
     else
         return ERROR_CONFLICT;
-   /*
-    Find leaf
-    Try Insert(key, value, leaf);
-    */
     return ERROR_NOERROR;
 }
 
-#if 0
-/*
- * Recursive function that, given the proper leaf node, will try to insert the key-val
- * pair there. If it needs to do any splitting, it will recurse up the B-tree, adding 
- * pointers and splitting as necessary until it either (1) does not need to do any more
- * splitting, or (2) reaches the root node
- */
-void BTreeIndex::TryInsert(const KEY_T &key, const VALUE_T &value, const SIZE_T &node)
-{
-
-    /*
-    Logic for root-node
-    If (room in root)
-        Insert
-    Else
-        Split into 2 nodes
-        change type to intermediate / leaf as appropriate
-        Create new root at higher level
-
-
-    Logic for leaf and intermediate nodes:
-    If (room in leaf)
-    {
-        put the key-value pair there
-    } 
-    else
-    {
-        Split the node
-        put the key-value pair in appropriate new node
-        Return to higher node
-    }
-    */
-
-}
-#endif
 
 /*
  * Name:    Update
@@ -771,12 +745,13 @@ ERROR_T BTreeIndex::SanityCheck() const
  *
  * TODO................................................................
  */
-ostream & BTreeIndex::Print(ostream &os=std::cout) const
+ostream & BTreeIndex::Print(ostream &os) const
 {
     BTreeIndex::Display(os, BTREE_DEPTH_DOT);
     return os;
 }
 
-
-
-
+ostream & BTreeIndex::DebugPrint() const
+{ // Because gdb has problems resolving stdout
+    return Print(std::cout); 
+}

@@ -102,7 +102,7 @@ int main(int argc, char *argv[])
     } else if (action == "DISPLAY") {
       // This should always be OK
       cout <<"OK BEGIN DISPLAY\n";
-      btree->Display(cout,BTREE_SORTED_KEYVAL);
+      btree->Display(cout, BTREE_DEPTH_DOT); //BTREE_SORTED_KEYVAL);
       cout <<"OK END DISPLAY\n";
     } else if (action == "DEINIT"){
       if ((rc=btree->Detach(superblocknum))!=ERROR_NOERROR) { 

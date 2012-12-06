@@ -69,7 +69,8 @@ class BTreeIndex {
 
   ERROR_T      DisplayInternal(const SIZE_T &node,
 			       ostream &o, 
-			       const BTreeDisplayType display_type=BTREE_DEPTH) const;
+               const BTreeDisplayType display_type=BTREE_DEPTH_DOT) const;
+               //const BTreeDisplayType display_type=BTREE_DEPTH) const;
 public:
   //
   // keysize and valueszie should be stored in the 
@@ -143,7 +144,7 @@ public:
   // key/value pairs in the leaves, one "(key, value)" tuple
   // per line.  This will be the keys and values in the tree
   // sorted in order of keys.
-  ERROR_T Display(ostream &o, BTreeDisplayType display_type=BTREE_DEPTH) const;
+  ERROR_T Display(ostream &o, BTreeDisplayType display_type=BTREE_DEPTH_DOT) const; //display_type=BTREE_DEPTH) const;
   
   ostream & Print(ostream &os) const;
   

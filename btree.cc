@@ -5,7 +5,7 @@
  *
  * Lizz Bartos - eab879
  * Stephen Duranski -
- * Alex Jablonski - 
+ * Alex Jablonski - amj650
  * 
  ---------------------------------------------------------------------------- */
 
@@ -135,6 +135,15 @@ ERROR_T BTreeIndex::DeallocateNode(const SIZE_T &n)
     return ERROR_NOERROR;
 }
 
+// This is called before any inserts, updates, or deletes happen
+// If create=true, then initblock is meaningless
+// If create=false, than the index already exists and we are telling you
+// the block that the last detach returned
+// This should be your superblock, which contains the information
+// you need to find the elements of the tree.
+// return zero on success or ERROR_NOTANINDEX if we are
+// giving you an incorrect block to start with
+
 /*
  * Name:    Attach
  * Purpose: open a BTree for use.
@@ -218,6 +227,9 @@ ERROR_T BTreeIndex::Attach(const SIZE_T initblock, const bool create)
 }
     
 
+// This is called after all inserts, updates, or deletes are done.
+// We expect you to tell us the number of your superblock, which
+// we will return to you on the next attach
 /*
  * Detach(SIZE_T &initblock)
  *
@@ -657,25 +669,31 @@ static ERROR_T PrintNode(ostream &os, SIZE_T nodenum, BTreeNode &b, BTreeDisplay
     return ERROR_NOERROR;
 }
 
+// return zero on success
+// return ERROR_NONEXISTENT  if the key doesn't exist
 /*
  * Name:    Lookup
  * Purpose: return the value associated with the key
  * Params:  const KEY_T &key,
  *          VALUE_T &value
- * Returns: 
  */
 ERROR_T BTreeIndex::Lookup(const KEY_T &key, VALUE_T &value)
 {
     return LookupOrUpdateInternal(superblock.info.rootnode, BTREE_OP_LOOKUP, key, value);
 }
 
+
+
+// return zero on success
+// return ERROR_NOSPACE if you run out of disk space
+// return ERROR_SIZE if the key or value are the wrong size for this index
+// return ERROR_CONFLICT if the key already exists and it's a unique index
 /*
  * Name:    Insert
  * Purpose: insert the key/value pair
  * Params:  const KEY_T &key,
  *          const VALUE_T &value
  * Returns: 
- * TODO................................................................
  */
 ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
 {
@@ -745,14 +763,14 @@ ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
         return ERROR_CONFLICT;
 }
 
-
+// return zero on success
+// return ERROR_NONEXISTENT  if the key doesn't exist
+// return ERROR_SIZE if the key or value are the wrong size for this index
 /*
  * Name:    Update
  * Purpose: change the value associated with an existing key
  * Params:  const KEY_T &key
  *          const VALUE_T &value
- * Returns:
- * TODO................................................................
  */
 ERROR_T BTreeIndex::Update(const KEY_T &key, const VALUE_T &value)
 {
@@ -762,6 +780,9 @@ ERROR_T BTreeIndex::Update(const KEY_T &key, const VALUE_T &value)
 }
 
 
+// return zero on success
+// return ERROR_NONEXISTENT  if the key doesn't exist
+// return ERROR_SIZE if the key or value are the wrong size for this index
 /*
  * Name:    Delete
  * Purpose: delete the key/value pairassociated with the given key
@@ -852,6 +873,17 @@ ERROR_T BTreeIndex::DisplayInternal(const SIZE_T &node,
     return ERROR_NOERROR;
 }
 
+
+// Display tree
+// BTREE_DEPTH means to do a depth first traversal of
+// the tree, printing each node
+// BTREE_DEPTH_DOT means to do the same way, but print
+// the tree in a Graphviz/dot-compatible way (nodes and edges)
+// BTREE_SORTED_KEYVAL means to do a depth first traversal,
+// like the previous two, but to only print the
+// key/value pairs in the leaves, one "(key, value)" tuple
+// per line.  This will be the keys and values in the tree
+// sorted in order of keys.
 /*
  * Name:    Display
  * Purpose: do a traversal of the BTree, printing out the sorted (key,value)
@@ -874,6 +906,9 @@ ERROR_T BTreeIndex::Display(ostream &o, BTreeDisplayType display_type) const
 }
 
 
+// Here you should figure out if your index makes sense
+// Is it a tree?  Is it in order?  Is it balanced?  Does each node have
+// a valid use ratio?
 /*
  * Name:    SanityCheck() const
  * Purpose: do a self-check of the tree looking for problems --- 

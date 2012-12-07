@@ -60,12 +60,12 @@ class BTreeIndex {
 				      const KEY_T &key,
 				      VALUE_T &val);
   
-  bool         IsNodeFull(const SIZE_T node);
+  ERROR_T      PlaceKeyVal(SIZE_T node, SIZE_T parentNode, const KEY_T &key, const VALUE_T &value);
   ERROR_T      AddNewKeyPtr(const SIZE_T node, const KEY_T &splitKey, SIZE_T newNode);
   ERROR_T      AddNewKeyVal(const SIZE_T node, const KEY_T &key, const VALUE_T &value);
   ERROR_T      AddKeyPtrVal(const SIZE_T node, const KEY_T &key, const VALUE_T &value, SIZE_T newNode);
+  bool         IsNodeFull(const SIZE_T node);
   ERROR_T      SplitNode(const SIZE_T node, SIZE_T &newNode, KEY_T &splitKey);
-  ERROR_T      PlaceKeyVal(SIZE_T node, SIZE_T parentNode, const KEY_T &key, const VALUE_T &value);
 
   ERROR_T      DisplayInternal(const SIZE_T &node,
 			       ostream &o, 

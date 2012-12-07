@@ -241,228 +241,50 @@ ERROR_T BTreeIndex::Detach(SIZE_T &initblock)
 
 
 /*
- * IsNodeFull
- *
- * Tells whether a node is full or not
+ * Name:    Display
+ * Purpose: do a traversal of the BTree, printing out the sorted (key,value)
+ *          pairs in ascending order of the keys
+ * Params:  (ostream &o, BTreeDisplayType display_type)
  */
-bool BTreeIndex::IsNodeFull(const SIZE_T node)
+ERROR_T BTreeIndex::Display(ostream &o, BTreeDisplayType display_type) const
 {
-    BTreeNode b;
-    b.Unserialize(buffercache, node);
-
-    switch (b.info.nodetype) {
-        case BTREE_ROOT_NODE:
-        case BTREE_INTERIOR_NODE:
-            return (b.info.GetNumSlotsAsInterior() == b.info.numkeys);
-        case BTREE_LEAF_NODE:
-            return (b.info.GetNumSlotsAsLeaf() == b.info.numkeys);
-    }
-    cerr << "Invalid node type passed to IsNodeFull in btree.cc" << endl;
-    return false;
-}
-
-/*
- * SplitNode(
- *
- */
-ERROR_T BTreeIndex::SplitNode(const SIZE_T node, SIZE_T &newNode, KEY_T &splitKey)
-{
-    // in comments, n = left.info.numkeys
-    BTreeNode left;
-    SIZE_T keysLeft, keysRight;
-    ERROR_T error;
-    left.Unserialize(buffercache, node);
-    BTreeNode right = left;
-
-    if ((error = AllocateNode(newNode)))
-        return error;
-    if ((error = right.Serialize(buffercache, newNode)))
-        return error;
-    
-    if (left.info.nodetype == BTREE_LEAF_NODE) {
-        keysLeft = (left.info.numkeys + 2) / 2; // Ceiling of (n+1) / 2
-        keysRight = left.info.numkeys - keysLeft;
-
-        left.GetKey(keysLeft - 1, splitKey);
-
-        char *src = left.ResolveKeyVal(keysLeft);
-        char *dest = right.ResolveKeyVal(0);
-
-        memcpy(dest, src, keysRight * (left.info.keysize + left.info.valuesize));
-    } else { // Root or intermediate node
-        keysLeft = left.info.numkeys / 2; // Floor of n / 2
-        keysRight = left.info.numkeys - keysLeft - 1; // one key will be promoted
-        
-        left.GetKey(keysLeft, splitKey);
-
-        char *src = left.ResolvePtr(keysLeft + 1);
-        char *dest = right.ResolvePtr(0);
-        
-        memcpy(dest, src, keysRight * (left.info.keysize + sizeof(SIZE_T)) + sizeof(SIZE_T));
-    }
-    left.info.numkeys = keysLeft;
-    right.info.numkeys = keysRight;
-    left.Serialize(buffercache, node);
-    right.Serialize(buffercache, newNode);
-    return ERROR_NOERROR; 
-}
-
-
-ERROR_T BTreeIndex::AddKeyPtrVal(const SIZE_T node, const KEY_T &key, const VALUE_T &value, SIZE_T newNode)
-{
-    BTreeNode b;
-    b.Unserialize(buffercache, node);
-    KEY_T testkey;
-    SIZE_T entriesToCopy;
-    SIZE_T numkeys = b.info.numkeys;
-    SIZE_T offset;
     ERROR_T rc;
-    SIZE_T entrySize;
-
-    // Set entry size, and check for valid node type
-    switch (b.info.nodetype) {
-        case BTREE_ROOT_NODE:
-        case BTREE_INTERIOR_NODE:
-            entrySize = b.info.keysize + sizeof(SIZE_T);
-            break;
-        case BTREE_LEAF_NODE:
-            entrySize = b.info.keysize + b.info.valuesize;
-            break;
-        default:
-            return ERROR_INSANE;
+    if (display_type==BTREE_DEPTH_DOT)
+    {
+        o << "digraph tree { \n";
     }
-
-    b.info.numkeys++;
-    if (numkeys > 0) {
-        for (offset=0, entriesToCopy = numkeys;
-                offset < numkeys;
-                offset++, entriesToCopy--) {
-            if ((rc = b.GetKey(offset, testkey)))
-                return rc;
-            // If the new key is less than the current key, shift all greater keys up
-            // and put this new key in the current location
-            if (key < testkey) {
-                void *src = b.ResolveKey(offset);
-                void *dest = b.ResolveKey(offset + 1);
-                memmove(dest, src, entriesToCopy * entrySize);
-                if (b.info.nodetype == BTREE_LEAF_NODE) {
-                    if ((rc = b.SetKey(offset, key)) || (rc = b.SetVal(offset, value)))
-                        return rc;
-                } else {
-                    if ((rc = b.SetKey(offset, key)) || (rc = b.SetPtr(offset+1, newNode)))
-                        return rc;
-                }
-                break;
-            }
-            if (offset == numkeys - 1) { 
-                // If we are on the last key, and the new key was not less than this one, 
-                // then the new key becomes the last key
-                if (b.info.nodetype == BTREE_LEAF_NODE) {
-                    if ((rc = b.SetKey(numkeys, key)) || (rc = b.SetVal(numkeys, value)))
-                        return rc;
-                } else {
-                    if ((rc = b.SetKey(numkeys, key)) || (rc = b.SetPtr(numkeys+1, newNode)))
-                        return rc;
-                }
-                break;
-            }
-        }
-    } else { // 0 keys in table - only when adding leaves to small initial table
-        if ((rc = b.SetKey(0, key)) || (rc = b.SetVal(0, value)))
-            return rc;
+    rc=DisplayInternal(superblock.info.rootnode,o,display_type);
+    if (display_type==BTREE_DEPTH_DOT)
+    {
+        o << "}\n";
     }
-    return b.Serialize(buffercache, node);
-
-}
-
-ERROR_T BTreeIndex::AddNewKeyPtr(const SIZE_T node, const KEY_T &splitKey, SIZE_T newNode)
-{
-    return AddKeyPtrVal(node, splitKey, VALUE_T(), newNode);
-}
-
-ERROR_T BTreeIndex::AddNewKeyVal(const SIZE_T node, const KEY_T &key, const VALUE_T &value)
-{
-    return AddKeyPtrVal(node, key, value, 0);
+    return ERROR_NOERROR;
 }
 
 
 /*
- * PlaceKeyVal
- *
- * Looks up the node where a key should go
+ * Name:    Lookup
+ * Purpose: return the value associated with the key
+ * Params:  const KEY_T &key,
+ *          VALUE_T &value
  */
-ERROR_T BTreeIndex::PlaceKeyVal(SIZE_T node, SIZE_T parent, const KEY_T &key, const VALUE_T &value)
+ERROR_T BTreeIndex::Lookup(const KEY_T &key, VALUE_T &value)
 {
-    BTreeNode b;
-    ERROR_T rc;
-    SIZE_T offset;
-    KEY_T testkey;
-    SIZE_T ptr;
-    // Only used in splitting
-    SIZE_T newNode;
-    KEY_T splitKey;
+    return LookupOrUpdateInternal(superblock.info.rootnode, BTREE_OP_LOOKUP, key, value);
+}
 
-    b.Unserialize(buffercache, node); 
-    switch (b.info.nodetype) {
-        // Internal nodes:
-        // store keys and pointers (disk block #) to other disk blocks
-        case BTREE_ROOT_NODE:
-        case BTREE_INTERIOR_NODE:
-            // Scan through key/ptr pairs
-            // and recurse if possible
-            for (offset=0;offset<b.info.numkeys;offset++)
-            {
-                rc=b.GetKey(offset,testkey);
-                if (rc) {  return rc; }
-                if (key<testkey || key==testkey) {
-                    // OK, so we now have the first key that's larger
-                    // so we ned to recurse on the ptr immediately previous to
-                    // this one, if it exists
-                    rc=b.GetPtr(offset,ptr);
-                    if (rc) { return rc; }
-                    rc=PlaceKeyVal(ptr, node, key, value);
-                    if (rc) { return rc; }
-                    if (IsNodeFull(ptr)) {
-                        rc = SplitNode(ptr, newNode, splitKey);
-                        if (rc) { return rc; }
-                        return AddNewKeyPtr(node, splitKey, newNode);
-                    } else {
-                        return rc;
-                    }
-                }
-            }
-            // if we got here, we need to go to the next pointer, if it exists
-            if (b.info.numkeys>0) {
-                rc=b.GetPtr(b.info.numkeys,ptr);
-                if (rc) { return rc; }
-                rc=PlaceKeyVal(ptr, node, key, value);
-                if (rc) { return rc; }
-                if (IsNodeFull(ptr)) {
-                    rc = SplitNode(ptr, newNode, splitKey);
-                    if (rc) { return rc; }
-                    return AddNewKeyPtr(node, splitKey, newNode);
-                } else {
-                    return rc;
-                }
-            } else {
-                // There are no keys at all on this node, so nowhere to go
-                return ERROR_NONEXISTENT;
-            }
-            break;
-            
-        // Leaf nodes: store keys and their associated values
-        case BTREE_LEAF_NODE:
-            return AddNewKeyVal(node, key, value);
-            break;
 
-        default:
-            // We can't be looking at anything other than
-            // a root, internal, or leaf [node]
-            return ERROR_INSANE;
-            break;
-    }  
-    
-    return ERROR_INSANE;
+/*
+ * Name:    Update
+ * Purpose: change the value associated with an existing key
+ * Params:  const KEY_T &key
+ *          const VALUE_T &value
+ */
+ERROR_T BTreeIndex::Update(const KEY_T &key, const VALUE_T &value)
+{
+    // WROTE ME
+    VALUE_T valueWritable = value;
+    return LookupOrUpdateInternal(superblock.info.rootnode, BTREE_OP_UPDATE, key, valueWritable);
 }
 
 
@@ -561,6 +383,374 @@ ERROR_T BTreeIndex::LookupOrUpdateInternal(const SIZE_T &node,
     }  
     
     return ERROR_INSANE;
+}
+
+
+/*
+ * Name:    Delete
+ * Purpose: delete the key/value pairassociated with the given key
+ * Params:  const KEY_T &key
+ * Returns:
+ */
+ERROR_T BTreeIndex::Delete(const KEY_T &key)
+{
+    // This is optional extra credit for F12
+    //
+    //
+    return ERROR_UNIMPL;
+}
+
+
+/*
+ * Name:    Insert
+ * Purpose: insert the key/value pair
+ * Params:  const KEY_T &key,
+ *          const VALUE_T &value
+ * Returns: 
+ */
+ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
+{
+    // Insertion of existing keys should fail (update is the appropriate operation)
+
+    ERROR_T error;
+    BTreeNode root;
+    root.Unserialize(buffercache,superblock.info.rootnode);
+
+    if (root.info.numkeys == 0) { // This is the case when root is empty
+        BTreeNode leaf(BTREE_LEAF_NODE, 
+            superblock.info.keysize,
+            superblock.info.valuesize,
+            buffercache->GetBlockSize());
+        
+        SIZE_T leftNode;
+        SIZE_T rightNode;
+        // Allocate the beginning leaf nodes of root
+        if ((error = AllocateNode(leftNode)) != ERROR_NOERROR)
+            return error;
+        if ((error = AllocateNode(rightNode)) != ERROR_NOERROR)
+            return error;
+        // Write these new blocks to the disk as leafs
+        // (see Attach for how the root and superblock are initialized
+        // and written - AllocateNode does not handle all of it!)
+        leaf.Serialize(buffercache, leftNode); 
+        leaf.Serialize(buffercache, rightNode);
+        root.info.numkeys += 1;
+        root.SetKey(0, key);
+        root.SetPtr(0, leftNode);
+        root.SetPtr(1, rightNode);
+        root.Serialize(buffercache, superblock.info.rootnode);
+    } 
+
+    VALUE_T temp;
+    SIZE_T oldRoot=superblock.info.rootnode, newNode;
+    KEY_T splitKey;
+
+    BTreeNode interior(BTREE_INTERIOR_NODE, 
+        superblock.info.keysize,
+        superblock.info.valuesize,
+        buffercache->GetBlockSize());
+
+    if (ERROR_NONEXISTENT == Lookup(key, temp)) {
+        error = PlaceKeyVal(superblock.info.rootnode, superblock.info.rootnode, key, value);
+        if (IsNodeFull(superblock.info.rootnode)) {
+            SplitNode(oldRoot, newNode, splitKey);
+            // Load the node data into Interior nodes (indead of root nodes)
+            // and then save this new node status onto disk (for both nodes)
+            interior.Unserialize(buffercache, oldRoot);
+            interior.Serialize(buffercache, oldRoot);
+            interior.Unserialize(buffercache, newNode);
+            interior.Serialize(buffercache, newNode);
+
+            // Make new root node
+            if ((error = AllocateNode(superblock.info.rootnode)) != ERROR_NOERROR)
+                return error;
+            root.info.numkeys = 1;
+            root.SetKey(0, splitKey);
+            root.SetPtr(0, oldRoot);
+            root.SetPtr(1, newNode);
+            root.Serialize(buffercache, superblock.info.rootnode);
+        }
+        return error;
+    }
+    else
+        return ERROR_CONFLICT;
+}
+
+
+// Here you should figure out if your index makes sense
+// Is it a tree?  Is it in order?  Is it balanced?  Does each node have
+// a valid use ratio?
+/*
+ * Name:    SanityCheck() const
+ * Purpose: do a self-check of the tree looking for problems --- 
+ *          this is like "chkdsk" or "fsck" in a file system
+ * Params:  none
+ *
+ * TODO................................................................
+ */
+ERROR_T BTreeIndex::SanityCheck() const
+{
+    // WRITE ME
+    return ERROR_UNIMPL;
+}
+
+
+/*
+ * PlaceKeyVal
+ *
+ * Tries to place a key-value pair in the BTree
+ */
+ERROR_T BTreeIndex::PlaceKeyVal(SIZE_T node, SIZE_T parent, const KEY_T &key, const VALUE_T &value)
+{
+    BTreeNode b;
+    ERROR_T rc;
+    SIZE_T offset;
+    KEY_T testkey;
+    SIZE_T ptr;
+    // Only used in splitting
+    SIZE_T newNode;
+    KEY_T splitKey;
+
+    b.Unserialize(buffercache, node); 
+    switch (b.info.nodetype) {
+        // Internal nodes:
+        // store keys and pointers (disk block #) to other disk blocks
+        case BTREE_ROOT_NODE:
+        case BTREE_INTERIOR_NODE:
+            // Scan through key/ptr pairs
+            // and recurse if possible
+            for (offset=0;offset<b.info.numkeys;offset++)
+            {
+                rc=b.GetKey(offset,testkey);
+                if (rc) {  return rc; }
+                if (key<testkey || key==testkey) {
+                    // OK, so we now have the first key that's larger
+                    // so we ned to recurse on the ptr immediately previous to
+                    // this one, if it exists
+                    rc=b.GetPtr(offset,ptr);
+                    if (rc) { return rc; }
+                    rc=PlaceKeyVal(ptr, node, key, value);
+                    if (rc) { return rc; }
+                    if (IsNodeFull(ptr)) {
+                        rc = SplitNode(ptr, newNode, splitKey);
+                        if (rc) { return rc; }
+                        return AddNewKeyPtr(node, splitKey, newNode);
+                    } else {
+                        return rc;
+                    }
+                }
+            }
+            // if we got here, we need to go to the next pointer, if it exists
+            if (b.info.numkeys>0) {
+                rc=b.GetPtr(b.info.numkeys,ptr);
+                if (rc) { return rc; }
+                rc=PlaceKeyVal(ptr, node, key, value);
+                if (rc) { return rc; }
+                if (IsNodeFull(ptr)) {
+                    rc = SplitNode(ptr, newNode, splitKey);
+                    if (rc) { return rc; }
+                    return AddNewKeyPtr(node, splitKey, newNode);
+                } else {
+                    return rc;
+                }
+            } else {
+                // There are no keys at all on this node, so nowhere to go
+                return ERROR_NONEXISTENT;
+            }
+            break;
+            
+        // Leaf nodes: store keys and their associated values
+        //
+        // Since part of the invariant we've established is that no node
+        // will ever be completely full, there will always be space for a new 
+        // key-value pair in a leaf node, so we don't need to do anything extra.
+        //
+        // The recursive call that led us to this leaf node will handle checking if
+        // the leaf node is full after this new key-value pair is inserted, and
+        // thus the invariant is maintained
+        case BTREE_LEAF_NODE:
+            return AddNewKeyVal(node, key, value);
+            break;
+
+        default:
+            // We can't be looking at anything other than
+            // a root, internal, or leaf [node]
+            return ERROR_INSANE;
+            break;
+    }  
+    
+    return ERROR_INSANE;
+}
+
+
+/*
+ * AddNewKeyPtr
+ *
+ * Adds new key-pointer pair to an interior node
+ *
+ * (passes a dummy value for the 3rd argument to AddKeyPtrVal)
+ */
+ERROR_T BTreeIndex::AddNewKeyPtr(const SIZE_T node, const KEY_T &splitKey, SIZE_T newNode)
+{
+    return AddKeyPtrVal(node, splitKey, VALUE_T(), newNode);
+}
+
+
+/*
+ * AddNewKeyVal
+ *
+ * Adds a new key-value pair to a leaf node
+ *
+ * (passes a dummy value for the 4th argument to AddKeyPtrVal)
+ */
+ERROR_T BTreeIndex::AddNewKeyVal(const SIZE_T node, const KEY_T &key, const VALUE_T &value)
+{
+    return AddKeyPtrVal(node, key, value, 0);
+}
+
+
+/*
+ * AddKeyPtrVal
+ *
+ * Puts data into a node. This handles the logic for LEAF, INTERIOR, and ROOT node insertion
+ */
+ERROR_T BTreeIndex::AddKeyPtrVal(const SIZE_T node, const KEY_T &key, const VALUE_T &value, SIZE_T newNode)
+{
+    BTreeNode b;
+    b.Unserialize(buffercache, node);
+    KEY_T testkey;
+    SIZE_T entriesToCopy;
+    SIZE_T numkeys = b.info.numkeys;
+    SIZE_T offset;
+    ERROR_T rc;
+    SIZE_T entrySize;
+
+    // Set entry size, and check for valid node type
+    switch (b.info.nodetype) {
+        case BTREE_ROOT_NODE:
+        case BTREE_INTERIOR_NODE:
+            entrySize = b.info.keysize + sizeof(SIZE_T);
+            break;
+        case BTREE_LEAF_NODE:
+            entrySize = b.info.keysize + b.info.valuesize;
+            break;
+        default: // Invalid node type
+            return ERROR_INSANE;
+    }
+
+    b.info.numkeys++;
+    if (numkeys > 0) {
+        for (offset=0, entriesToCopy = numkeys;
+                offset < numkeys;
+                offset++, entriesToCopy--) {
+            if ((rc = b.GetKey(offset, testkey)))
+                return rc;
+            // If the new key is less than the current key, shift all greater keys up
+            // and put this new key in the current location
+            if (key < testkey) {
+                void *src = b.ResolveKey(offset);
+                void *dest = b.ResolveKey(offset + 1);
+                memmove(dest, src, entriesToCopy * entrySize);
+                if (b.info.nodetype == BTREE_LEAF_NODE) {
+                    if ((rc = b.SetKey(offset, key)) || (rc = b.SetVal(offset, value)))
+                        return rc;
+                } else {
+                    if ((rc = b.SetKey(offset, key)) || (rc = b.SetPtr(offset+1, newNode)))
+                        return rc;
+                }
+                break;
+            }
+            if (offset == numkeys - 1) { 
+                // If we are on the last key, and the new key was not less than this one, 
+                // then the new key becomes the last key
+                if (b.info.nodetype == BTREE_LEAF_NODE) {
+                    if ((rc = b.SetKey(numkeys, key)) || (rc = b.SetVal(numkeys, value)))
+                        return rc;
+                } else {
+                    if ((rc = b.SetKey(numkeys, key)) || (rc = b.SetPtr(numkeys+1, newNode)))
+                        return rc;
+                }
+                break;
+            }
+        }
+    } else { // 0 keys in table - only when adding leaves to small initial table
+        if ((rc = b.SetKey(0, key)) || (rc = b.SetVal(0, value)))
+            return rc;
+    }
+    return b.Serialize(buffercache, node);
+}
+
+
+/*
+ * IsNodeFull
+ *
+ * Tells whether a node is full or not
+ */
+bool BTreeIndex::IsNodeFull(const SIZE_T node)
+{
+    BTreeNode b;
+    b.Unserialize(buffercache, node);
+
+    switch (b.info.nodetype) {
+        case BTREE_ROOT_NODE:
+        case BTREE_INTERIOR_NODE:
+            return (b.info.GetNumSlotsAsInterior() == b.info.numkeys);
+        case BTREE_LEAF_NODE:
+            return (b.info.GetNumSlotsAsLeaf() == b.info.numkeys);
+    }
+    cerr << "Invalid node type passed to IsNodeFull in btree.cc" << endl;
+    return false;
+}
+
+
+/*
+ * SplitNode
+ *
+ * Splits any node and returns the node number for the new node, and the key
+ * that should be promoted by the split
+ */
+ERROR_T BTreeIndex::SplitNode(const SIZE_T node, SIZE_T &newNode, KEY_T &splitKey)
+{
+    // in comments, n = left.info.numkeys
+    BTreeNode left;
+    SIZE_T keysLeft, keysRight;
+    ERROR_T error;
+    left.Unserialize(buffercache, node);
+    BTreeNode right = left;
+
+    if ((error = AllocateNode(newNode)))
+        return error;
+    if ((error = right.Serialize(buffercache, newNode)))
+        return error;
+    
+    if (left.info.nodetype == BTREE_LEAF_NODE) {
+        keysLeft = (left.info.numkeys + 2) / 2; // Ceiling of (n+1) / 2
+        keysRight = left.info.numkeys - keysLeft;
+
+        left.GetKey(keysLeft - 1, splitKey);
+
+        // get location of first key in left/old node that will be moved
+        char *src = left.ResolveKeyVal(keysLeft); 
+        char *dest = right.ResolveKeyVal(0);
+
+        memcpy(dest, src, keysRight * (left.info.keysize + left.info.valuesize));
+    } else { // Root or intermediate node
+        keysLeft = left.info.numkeys / 2; // Floor of n / 2
+        keysRight = left.info.numkeys - keysLeft - 1; // one key will be promoted
+        
+        left.GetKey(keysLeft, splitKey);
+
+        char *src = left.ResolvePtr(keysLeft + 1);
+        char *dest = right.ResolvePtr(0);
+        
+        memcpy(dest, src, keysRight * (left.info.keysize + sizeof(SIZE_T)) + sizeof(SIZE_T));
+    }
+    left.info.numkeys = keysLeft;
+    right.info.numkeys = keysRight;
+
+    if ((error = left.Serialize(buffercache, node)))
+        return error;
+    return right.Serialize(buffercache, newNode);
 }
 
 
@@ -669,133 +859,6 @@ static ERROR_T PrintNode(ostream &os, SIZE_T nodenum, BTreeNode &b, BTreeDisplay
     return ERROR_NOERROR;
 }
 
-// return zero on success
-// return ERROR_NONEXISTENT  if the key doesn't exist
-/*
- * Name:    Lookup
- * Purpose: return the value associated with the key
- * Params:  const KEY_T &key,
- *          VALUE_T &value
- */
-ERROR_T BTreeIndex::Lookup(const KEY_T &key, VALUE_T &value)
-{
-    return LookupOrUpdateInternal(superblock.info.rootnode, BTREE_OP_LOOKUP, key, value);
-}
-
-
-
-// return zero on success
-// return ERROR_NOSPACE if you run out of disk space
-// return ERROR_SIZE if the key or value are the wrong size for this index
-// return ERROR_CONFLICT if the key already exists and it's a unique index
-/*
- * Name:    Insert
- * Purpose: insert the key/value pair
- * Params:  const KEY_T &key,
- *          const VALUE_T &value
- * Returns: 
- */
-ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
-{
-    // Insertion of existing keys should fail (update is the appropriate operation)
-
-    ERROR_T error;
-    BTreeNode root;
-    root.Unserialize(buffercache,superblock.info.rootnode);
-
-    if (root.info.numkeys == 0) { // This is the case when root is empty
-        BTreeNode leaf(BTREE_LEAF_NODE, 
-            superblock.info.keysize,
-            superblock.info.valuesize,
-            buffercache->GetBlockSize());
-        
-        SIZE_T leftNode;
-        SIZE_T rightNode;
-        // Allocate the beginning leaf nodes of root
-        if ((error = AllocateNode(leftNode)) != ERROR_NOERROR)
-            return error;
-        if ((error = AllocateNode(rightNode)) != ERROR_NOERROR)
-            return error;
-        // Write these new blocks to the disk as leafs
-        // (see Attach for how the root and superblock are initialized
-        // and written - AllocateNode does not handle all of it!)
-        leaf.Serialize(buffercache, leftNode); 
-        leaf.Serialize(buffercache, rightNode);
-        root.info.numkeys += 1;
-        root.SetKey(0, key);
-        root.SetPtr(0, leftNode);
-        root.SetPtr(1, rightNode);
-        root.Serialize(buffercache, superblock.info.rootnode);
-    } 
-
-    VALUE_T temp;
-    SIZE_T oldRoot=superblock.info.rootnode, newNode;
-    KEY_T splitKey;
-
-    BTreeNode interior(BTREE_INTERIOR_NODE, 
-        superblock.info.keysize,
-        superblock.info.valuesize,
-        buffercache->GetBlockSize());
-
-    if (ERROR_NONEXISTENT == Lookup(key, temp)) {
-        error = PlaceKeyVal(superblock.info.rootnode, superblock.info.rootnode, key, value);
-        if (IsNodeFull(superblock.info.rootnode)) {
-            SplitNode(oldRoot, newNode, splitKey);
-            // Load the node data into Interior nodes (indead of root nodes)
-            // and then save this new node status onto disk (for both nodes)
-            interior.Unserialize(buffercache, oldRoot);
-            interior.Serialize(buffercache, oldRoot);
-            interior.Unserialize(buffercache, newNode);
-            interior.Serialize(buffercache, newNode);
-
-            // Make new root node
-            if ((error = AllocateNode(superblock.info.rootnode)) != ERROR_NOERROR)
-                return error;
-            root.info.numkeys = 1;
-            root.SetKey(0, splitKey);
-            root.SetPtr(0, oldRoot);
-            root.SetPtr(1, newNode);
-            root.Serialize(buffercache, superblock.info.rootnode);
-        }
-        return error;
-    }
-    else
-        return ERROR_CONFLICT;
-}
-
-// return zero on success
-// return ERROR_NONEXISTENT  if the key doesn't exist
-// return ERROR_SIZE if the key or value are the wrong size for this index
-/*
- * Name:    Update
- * Purpose: change the value associated with an existing key
- * Params:  const KEY_T &key
- *          const VALUE_T &value
- */
-ERROR_T BTreeIndex::Update(const KEY_T &key, const VALUE_T &value)
-{
-    // WROTE ME
-    VALUE_T valueWritable = value;
-    return LookupOrUpdateInternal(superblock.info.rootnode, BTREE_OP_UPDATE, key, valueWritable);
-}
-
-
-// return zero on success
-// return ERROR_NONEXISTENT  if the key doesn't exist
-// return ERROR_SIZE if the key or value are the wrong size for this index
-/*
- * Name:    Delete
- * Purpose: delete the key/value pairassociated with the given key
- * Params:  const KEY_T &key
- * Returns:
- */
-ERROR_T BTreeIndex::Delete(const KEY_T &key)
-{
-    // This is optional extra credit for F12
-    //
-    //
-    return ERROR_UNIMPL;
-}
 
   
 //
@@ -874,62 +937,10 @@ ERROR_T BTreeIndex::DisplayInternal(const SIZE_T &node,
 }
 
 
-// Display tree
-// BTREE_DEPTH means to do a depth first traversal of
-// the tree, printing each node
-// BTREE_DEPTH_DOT means to do the same way, but print
-// the tree in a Graphviz/dot-compatible way (nodes and edges)
-// BTREE_SORTED_KEYVAL means to do a depth first traversal,
-// like the previous two, but to only print the
-// key/value pairs in the leaves, one "(key, value)" tuple
-// per line.  This will be the keys and values in the tree
-// sorted in order of keys.
-/*
- * Name:    Display
- * Purpose: do a traversal of the BTree, printing out the sorted (key,value)
- *          pairs in ascending order of the keys
- * Params:  (ostream &o, BTreeDisplayType display_type)
- */
-ERROR_T BTreeIndex::Display(ostream &o, BTreeDisplayType display_type) const
-{
-    ERROR_T rc;
-    if (display_type==BTREE_DEPTH_DOT)
-    {
-        o << "digraph tree { \n";
-    }
-    rc=DisplayInternal(superblock.info.rootnode,o,display_type);
-    if (display_type==BTREE_DEPTH_DOT)
-    {
-        o << "}\n";
-    }
-    return ERROR_NOERROR;
-}
-
-
-// Here you should figure out if your index makes sense
-// Is it a tree?  Is it in order?  Is it balanced?  Does each node have
-// a valid use ratio?
-/*
- * Name:    SanityCheck() const
- * Purpose: do a self-check of the tree looking for problems --- 
- *          this is like "chkdsk" or "fsck" in a file system
- * Params:  none
- *
- * TODO................................................................
- */
-ERROR_T BTreeIndex::SanityCheck() const
-{
-    // WRITE ME
-    return ERROR_UNIMPL;
-}
-
-
 /*
  * Name:    Print
  * Purpose:
  * Params:  ostream &os
- *
- * TODO................................................................
  */
 ostream & BTreeIndex::Print(ostream &os) const
 {

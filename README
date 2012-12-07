@@ -1,3 +1,21 @@
+Project C - BTree Index
+
+Alex Jablonski - amj650
+Lizz Bartos - eab879
+Stephen Duranski - sjd842
+
+Our implementation includes functionality for Insert, Update, Display, SanityCheck.
+We chose to use the given implementations for Initialize, Attach, Detach, Lookup
+and all of the other given data structures and functionality. We did not implement Delete.
+
+Further explanation can be found in the code.
+
+This implementation assumes that requests to the BTree are sequential,
+that keys and values are of fixed size and given when the BTree is initialized,
+and that all keys are unique.
+
+--------------------------------------------------------------------
+
 Welcome to BTree 
 
 (c) 2004 Peter A. Dinda, pdinda@northwestern.edu
